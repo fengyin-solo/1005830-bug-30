@@ -25,6 +25,8 @@ export type PageResult = {
   total: number
   page: number
   size: number
+  /** 兜底说明：缺字段拦截、空数据交代、对账异常等，页面原样展示 */
+  notices?: string[]
 }
 
 export type ActionResult = {

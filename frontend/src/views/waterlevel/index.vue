@@ -24,6 +24,18 @@
       </span>
     </p>
 
+    <section v-if="reviewRows.length" class="review-panel">
+      <h3 class="review-title">雨量异常待复核清单（{{ reviewRows.length }}）</h3>
+      <ul class="review-list">
+        <li v-for="item in reviewRows" :key="String(item.id)">
+          <strong>{{ item['监测编号'] }}</strong>
+          <span>{{ item['监测点位'] }}</span>
+          <span>{{ item['监测状态'] }}</span>
+          <em>{{ item.status }}</em>
+        </li>
+      </ul>
+    </section>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -89,6 +101,7 @@ const stats = [{"label": "待采集点位", "value": 0}, {"label": "水位正常
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
+const reviewRows = ref<EntryRow[]>([])
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
@@ -128,6 +141,10 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    // 雨量异常同步过来的待复核清单单独拉一份，不随本页筛选条件变化
+    reviewRows.value = listEntries(meta.key).items.filter(
+      (row) => String(row['超标判定'] ?? '') === '雨量异常待复核',
+    )
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '水位监测列表读取失败'
   }

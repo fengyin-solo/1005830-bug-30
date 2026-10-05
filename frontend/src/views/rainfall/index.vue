@@ -24,6 +24,10 @@
       </span>
     </p>
 
+    <ul v-if="notices.length" class="notice-list">
+      <li v-for="(notice, index) in notices" :key="index">{{ notice }}</li>
+    </ul>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -43,7 +47,13 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td
+            v-for="column in columns"
+            :key="column"
+            :class="{ 'empty-cell': isEmptyCell(row, column) }"
+          >
+            {{ cellText(row, column) }}
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -58,14 +68,17 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无雨量监测数据，可先登记雨量监测记录</td>
+          <td :colspan="columns.length + 2" class="empty-state">{{ emptyMessage }}</td>
         </tr>
       </tbody>
     </table>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条雨量监测记录</span>
-      <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span v-if="errorMessage" class="error-text">
+        {{ errorMessage }}
+        <button class="link" type="button" @click="reload">重试</button>
+      </span>
     </footer>
   </section>
 </template>
@@ -85,19 +98,63 @@ const meta = moduleMeta('rainfall')
 const columns = ["监测编号", "雨量站名", "时段雨量", "累计雨量", "降雨强度", "采集时间", "记录人", "监测状态"]
 const actions = ["提交采集", "确认核对", "标记异常"]
 const statuses = ["待采集", "已采集", "已核对", "数据异常"]
-const stats = [{"label": "待采集雨量站", "value": 0}, {"label": "已核对雨量站", "value": 0}, {"label": "数据异常站数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
+const notices = ref<string[]>([])
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+function countByStatus(status: string): number {
+  return rows.value.filter((row) => String(row.status) === status).length
+}
+
+// 统计卡与状态图例都从同一份列表结果算，两处显示的数才一致
+const stats = computed(() => [
+  { label: '待采集雨量站', value: countByStatus('待采集') },
+  { label: '已核对雨量站', value: countByStatus('已核对') },
+  { label: '数据异常站数', value: countByStatus('数据异常') },
+])
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+const activeFilterText = computed(() =>
+  Object.entries(filters.value)
+    .filter(([, value]) => value.trim() !== '')
+    .map(([field, value]) => `${field}「${value.trim()}」`)
+    .join('、'),
+)
+
+// 搜不到不等于数据丢了：点明是按什么条件没查到
+const emptyMessage = computed(() => {
+  if (!activeFilterText.value) {
+    return '暂无雨量监测数据，可先登记雨量监测记录'
+  }
+  return `未找到符合 ${activeFilterText.value} 的雨量监测记录，已有记录没有丢失，可调整或重置条件后再查`
+})
+
+function isBlank(value: unknown): boolean {
+  return value === undefined || value === null || String(value).trim() === ''
+}
+
+function isEmptyCell(row: EntryRow, column: string): boolean {
+  return column === '时段雨量' && isBlank(row[column])
+}
+
+// 时段雨量空着要明说：这是空数据，不是加载失败
+function cellText(row: EntryRow, column: string): string {
+  const value = row[column]
+  if (isBlank(value)) {
+    return column === '时段雨量' ? '空数据（待补录）' : '—'
+  }
+  return String(value)
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,8 +185,13 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    notices.value = payload.notices ?? []
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '雨量监测列表读取失败'
+    // 读取出错时清掉旧数，避免列表数与统计数对不上；重试成功后两处从同一份结果刷新
+    rows.value = []
+    total.value = 0
+    notices.value = []
+    errorMessage.value = `${error instanceof Error ? error.message : '雨量监测列表读取失败'}，可点「重试」再来一次`
   }
 }
 
