@@ -24,6 +24,47 @@
       </span>
     </p>
 
+    <section class="review-panel" aria-label="雨量异常待复核清单">
+      <header class="review-head">
+        <div>
+          <h3>雨量异常待复核清单</h3>
+          <p>雨量模块核对出的异常自动进入本清单；只新增待复核事项，不改动既有水位记录和原核对层级。</p>
+        </div>
+        <button class="btn" type="button" @click="loadReviewItems">刷新待复核</button>
+      </header>
+      <p v-if="reviewError" class="error-text">
+        {{ reviewError }}
+        <button class="link" type="button" @click="loadReviewItems">重新读取</button>
+      </p>
+      <table v-else class="data-table review-table">
+        <thead>
+          <tr>
+            <th>雨量记录编号</th>
+            <th>监测编号</th>
+            <th>雨量站名</th>
+            <th>原雨量核对层级</th>
+            <th>异常结论</th>
+            <th>差额</th>
+            <th>复核状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in reviewItems" :key="item.rainfallId">
+            <td>{{ item.rainfallId }}</td>
+            <td>{{ item.monitorId }}</td>
+            <td>{{ item.station }}</td>
+            <td>{{ item.originalStatus }}</td>
+            <td class="error-text">{{ item.conclusion }}</td>
+            <td>{{ formatDifference(item.difference) }}</td>
+            <td><span class="review-badge">{{ item.reviewStatus }}</span></td>
+          </tr>
+          <tr v-if="!reviewItems.length">
+            <td colspan="7" class="empty-state">暂无雨量异常待复核事项</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -58,14 +99,25 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无水位监测数据，可先登记水位监测记录</td>
+          <td :colspan="columns.length + 2" class="empty-state">
+            <template v-if="activeFilters.length">
+              没有找到符合 {{ activeFilters.map(([field, value]) => `「${field}：${value}」`).join('、') }} 的水位记录，
+              可清空条件后重新查看；这不是数据丢失或读取失败。
+            </template>
+            <template v-else>暂无水位监测数据，可先登记水位监测记录</template>
+          </td>
         </tr>
       </tbody>
     </table>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条水位监测记录</span>
-      <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span>
+        共 {{ total }} 条水位监测记录；雨量异常待复核 {{ reviewItems.length }} 条
+      </span>
+      <span v-if="errorMessage" class="error-text">
+        {{ errorMessage }}
+        <button class="link" type="button" @click="reload">重新读取</button>
+      </span>
     </footer>
   </section>
 </template>
@@ -76,28 +128,49 @@ import { computed, onMounted, ref } from 'vue'
 import {
   downloadEntries,
   listEntries,
+  listWaterlevelReviewItems,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import type { EntryRow, WaterlevelReviewItem } from '@/data/types'
 
 const meta = moduleMeta('waterlevel')
-const columns = ["监测编号", "监测点位", "水位读数", "警戒水位", "采集时间", "监测人", "超标判定", "监测状态"]
-const actions = ["提交采集", "判定正常", "标记超警戒"]
-const statuses = ["待采集", "已采集", "水位正常", "超警戒"]
-const stats = [{"label": "待采集点位", "value": 0}, {"label": "水位正常点位", "value": 0}, {"label": "超警戒点位数", "value": 0}]
+const columns = ['监测编号', '监测点位', '水位读数', '警戒水位', '采集时间', '监测人', '超标判定', '监测状态']
+const actions = ['提交采集', '判定正常', '标记超警戒']
+const statuses = ['待采集', '已采集', '水位正常', '超警戒']
+const stats = [{ label: '待采集点位', value: 0 }, { label: '水位正常点位', value: 0 }, { label: '超警戒点位数', value: 0 }]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const reviewItems = ref<WaterlevelReviewItem[]>([])
+const reviewError = ref('')
+
+const activeFilters = computed(() =>
+  Object.entries(filters.value).filter(([, value]) => value.trim() !== ''),
+)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function formatDifference(difference: number | undefined): string {
+  return difference === undefined ? '—' : `${difference} mm`
+}
+
+function loadReviewItems() {
+  reviewError.value = ''
+  try {
+    reviewItems.value = listWaterlevelReviewItems()
+  } catch (error) {
+    reviewItems.value = []
+    reviewError.value = error instanceof Error ? error.message : '雨量异常待复核清单读取失败'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +201,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    loadReviewItems()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '水位监测列表读取失败'
   }
